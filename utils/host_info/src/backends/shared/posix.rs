@@ -4,8 +4,10 @@
 
 #![allow(dead_code)]
 
-use libc::{setlocale, LC_ALL};
+use libc::{nl_langinfo, setlocale, LC_ALL, T_FMT};
 use std::{collections::HashMap, ffi::CStr, ptr, str::FromStr};
+
+use icu_locale_core::preferences::extensions::unicode::keywords::HourCycle;
 
 use crate::error::HostInfoError;
 
@@ -195,6 +197,102 @@ pub(crate) fn raw_locale_categories() -> Result<HashMap<LocaleCategory, String>,
     }
 
     Ok(out)
+}
+
+/// Detect hour cycle from the system's time format string.
+/// Parses nl_langinfo(T_FMT) to determine 12-hour vs 24-hour format.
+pub(crate) fn posix_hour_cycle() -> Option<HourCycle> {
+    // SAFETY: nl_langinfo returns a pointer to a static string for the current locale.
+    // The pointer is valid for the lifetime of the locale setting.
+    let ptr = unsafe { nl_langinfo(T_FMT) };
+    if ptr.is_null() {
+        return None;
+    }
+
+    let fmt = unsafe { CStr::from_ptr(ptr) }.to_str().ok()?;
+
+    // Look for strftime hour format specifiers:
+    // %H, %k -> 24-hour (H23)
+    // %I, %l -> 12-hour (H12)
+    // We scan the format string for the first hour specifier we find.
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.next() {
+                Some('H') | Some('k') => return Some(HourCycle::H23),
+                Some('I') | Some('l') => return Some(HourCycle::H12),
+                _ => continue,
+            }
+        }
+    }
+
+    None
+}
+
+// glibc-specific constants not exposed by the libc crate
+#[cfg(target_env = "gnu")]
+const _NL_TIME_FIRST_WEEKDAY: libc::nl_item = 0x2001E;
+
+#[cfg(target_env = "gnu")]
+const _NL_MEASUREMENT_MEASUREMENT: libc::nl_item = 0xD0001;
+
+/// Query the first day of the week from glibc's locale data.
+/// Returns the day name suitable for ICU (e.g., "sun", "mon").
+/// Only available on glibc systems.
+#[cfg(target_env = "gnu")]
+pub(crate) fn posix_first_weekday() -> Option<String> {
+    // SAFETY: nl_langinfo returns a pointer to locale data.
+    // _NL_TIME_FIRST_WEEKDAY returns a pointer to a single byte indicating the weekday (1-7).
+    let ptr = unsafe { nl_langinfo(_NL_TIME_FIRST_WEEKDAY) };
+    if ptr.is_null() {
+        return None;
+    }
+
+    // The value is a single byte where 1=Sunday, 2=Monday, etc.
+    let day = unsafe { *ptr as u8 };
+
+    match day {
+        1 => Some("sun".to_string()),
+        2 => Some("mon".to_string()),
+        3 => Some("tue".to_string()),
+        4 => Some("wed".to_string()),
+        5 => Some("thu".to_string()),
+        6 => Some("fri".to_string()),
+        7 => Some("sat".to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+pub(crate) fn posix_first_weekday() -> Option<String> {
+    None
+}
+
+/// Query the measurement system from glibc's locale data.
+/// Returns "metric" or "ussystem".
+/// Only available on glibc systems.
+#[cfg(target_env = "gnu")]
+pub(crate) fn posix_measurement() -> Option<String> {
+    // SAFETY: nl_langinfo returns a pointer to locale data.
+    // _NL_MEASUREMENT_MEASUREMENT returns a pointer to a single byte:
+    // 1 = metric, 2 = US customary
+    let ptr = unsafe { nl_langinfo(_NL_MEASUREMENT_MEASUREMENT) };
+    if ptr.is_null() {
+        return None;
+    }
+
+    let measurement = unsafe { *ptr as u8 };
+
+    match measurement {
+        1 => Some("metric".to_string()),
+        2 => Some("ussystem".to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+pub(crate) fn posix_measurement() -> Option<String> {
+    None
 }
 
 #[cfg(test)]

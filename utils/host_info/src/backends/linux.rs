@@ -56,7 +56,8 @@ impl HostInfoBackend for LinuxHostInfoBackend {
         if let Some(hc) = gnome_clock_format_hc() {
             return Ok(Some(hc));
         }
-        Ok(None)
+        // Fallback to POSIX time format detection
+        Ok(super::shared::posix::posix_hour_cycle())
     }
 }
 
@@ -84,6 +85,33 @@ impl RawHostInfoBackend for LinuxHostInfoBackend {
         }
 
         Ok(vec![])
+    }
+
+    fn raw_region() -> Result<Option<String>, HostInfoError> {
+        // Try to extract region from POSIX locale string
+        // Priority: LC_ALL > LC_MESSAGES > LANG
+        for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Ok(locale_str) = std::env::var(key) {
+                if !locale_str.is_empty() {
+                    if let Ok(posix) = PosixLocale::try_from_str(&locale_str) {
+                        if let Ok(locale) = Locale::try_from(posix) {
+                            if let Some(region) = locale.id.region {
+                                return Ok(Some(region.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn raw_measurement_system() -> Result<Option<String>, HostInfoError> {
+        Ok(super::shared::posix::posix_measurement())
+    }
+
+    fn raw_first_day_of_week() -> Result<Option<String>, HostInfoError> {
+        Ok(super::shared::posix::posix_first_weekday())
     }
 }
 
