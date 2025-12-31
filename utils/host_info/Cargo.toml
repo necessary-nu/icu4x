@@ -31,7 +31,7 @@ include = [
 displaydoc = { version = "0.2.3", default-features = false }
 icu_locale_core = { version = "2.1.0", path = "../../components/locale_core", features = ["alloc"] }
 icu_datetime = { version = "2.1.0", path = "../../components/datetime", optional = true }
-libc = "0.2.175"
+libc = { version = "0.2.175", default-features = false }
 
 [target.'cfg(all(target_os = "linux", icu4x_gio_available))'.dependencies]
 gio = { version = "0.21.2" }
